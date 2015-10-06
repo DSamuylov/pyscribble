@@ -1,0 +1,15 @@
+# Hidden directories
+.DS_Store
+.ipynb_checkpoints
+
+# File formats
+*.pyc
+
+# Temporary files
+*~
+
+# Folders
+data
+
+# Files
+todo.txt
