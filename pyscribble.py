@@ -6,13 +6,13 @@
 Scribble image and create binary mask.
 
 Usage:
-    pyscribble.py PATH-IMG
+    pyscribble.py <path-img>
 
 Arguments:
-    PATH-IMG
+    <path-img>
 
 Author: Denis Samuylov
-Date: 29.08.2015
+Date: denis.samuylov@gmail.com
 
 """
 
@@ -31,29 +31,32 @@ COLORTABLE = [QtGui.qRgb(i, i, i) for i in range(256)]
 
 
 class PixelPicker(QtGui.QWidget):
+    """Tool"""
 
     def __init__(self, path_img):
         super(PixelPicker, self).__init__()
 
         self.path_img = path_img
-        self.working_floder = os.path.split(path_img)[0]
+        self.working_floder = os.path.dirname(path_img)
 
         self.img = tifffile.imread(path_img)
+
         self.img_to_display = None
         self.img_zoomed = {}
 
         self.mask = np.zeros(self.img.shape[1:])
+        # TODO: it depends...
 
         self.current_z = 0
         self.current_t = 0
         self.current_zoom = 1
+
         self.project_in_z = False
         self.dragging = False
 
         self.initUI()
 
     def initUI(self):
-
         # setup image:
         nframes, nslices, ny, nx = self.img.shape
 
@@ -241,7 +244,7 @@ def main():
     args = docopt.docopt(__doc__)
     # Run:
     app = QtGui.QApplication(sys.argv)
-    PixelPicker(args["PATH-IMG"])
+    PixelPicker(args["<path-img>"])
     sys.exit(app.exec_())
 
 
