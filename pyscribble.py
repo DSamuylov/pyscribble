@@ -16,22 +16,20 @@ Date: denis.samuylov@gmail.com
 
 """
 
-import sys
 import os
-
-import numpy as np
-
+import sys
 import docopt
 import tifffile
+import numpy as np
 
-from PyQt4.QtCore import Qt
 from PyQt4 import QtGui
+from PyQt4.QtCore import Qt
+
 
 COLORTABLE = [QtGui.qRgb(i, i, i) for i in range(256)]
 
 
 class PixelPicker(QtGui.QWidget):
-    """Tool"""
 
     def __init__(self, path_img):
         super(PixelPicker, self).__init__()
