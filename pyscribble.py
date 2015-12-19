@@ -48,10 +48,9 @@ class ControlWindow(QtGui.QWidget):
             self.image_projected = np.mean(self.image, axis=0)
             self.image_is_loaded = True
 
-        self.mask = None
-        if self.image_is_loaded:
-            # TODO: The mask dimension depends on...
-            self.mask = np.zeros(self.image.shape[1:])
+        # Objects we will initialize from the scene
+        self.selected_pixels = None
+        self.polygon_collection = None
 
         # TODO: the projection depends on number of dimensions
         self.project_in_z = False
@@ -114,6 +113,82 @@ class ControlWindow(QtGui.QWidget):
         self.image_window.rescale_image_to_display()
 
 
+class GraphicsView(QtGui.QGraphicsView):
+    # http://stackoverflow.com/questions/13368947/drawing-a-line-consisting-of-multiple-points-using-pyqt
+
+    def __init__(self, parent=None):
+        super(GraphicsView, self).__init__(parent)
+        # We need to have an access to the control window
+        self.control_window = None
+        # Where we start drawing:
+        self.dragging = None
+        # Objects to draw:
+        # self.selected_pixels = set([])  # y, x
+        # Store row data that we read from mouse listeners
+        self.scribbles = []  # y, x
+        self.current_scribble = None
+        # Define pens:
+        self.red_pen = QtGui.QPen(QtGui.QColor("red"), 3)
+
+    def mousePressEvent(self, event):
+        self.dragging = True
+        # Register clicked point:
+        qp = QtCore.QPointF(event.pos())
+        # Select a pixel:
+        # self.selected_pixels.add(self.qp2px(qp))
+
+        # Initialize a trace:
+        self.current_scribble = []
+        self.current_scribble.append(self.qp2px(qp))
+        self.draw_current_scribble()
+
+    def mouseMoveEvent(self, event):
+        qp = QtCore.QPointF(event.pos())
+        # Select a pixel:
+        # self.selected_pixels.add(self.qp2px(qp))
+
+        # Update trace:
+        self.current_scribble.append(self.qp2px(qp))
+        self.draw_current_scribble()
+
+    def mouseReleaseEvent(self, event):
+        self.dragging = False
+        # Save the trace we have drawn:
+        self.scribbles.append(self.current_scribble)
+        self.current_scribble = None
+        self.draw_scribbles()
+
+    def qp2px(self, qp):
+        """Convert clicked position to selected pixel."""
+        return tuple([c/self.control_window.view["scale"]
+                      for c in [qp.y(), qp.x()]])
+
+    def px2qp(self, px):
+        """Convert clicked position to selected pixel."""
+        scale = self.control_window.view["scale"]
+        return QtCore.QPoint(px[1]*scale, px[0]*scale)
+
+    def draw_current_scribble(self):
+        if self.current_scribble is not None:
+            polygon = QtGui.QPolygonF()
+            [polygon.append(self.px2qp(p)) for p in self.current_scribble]
+
+            path = QtGui.QPainterPath()
+            path.addPolygon(polygon)
+            self.scene().addPath(path, self.red_pen)
+
+    def draw_scribbles(self):
+        # Draw all traces that are already stored:
+        for trace in self.scribbles:
+            polygon = QtGui.QPolygonF()
+            [polygon.append(self.px2qp(p)) for p in trace]
+
+            path = QtGui.QPainterPath()
+            path.addPolygon(polygon)
+            self.scene().addPath(path, self.red_pen)
+
+
+
 class ImageWindow(QtGui.QWidget):
 
     def __init__(self):
@@ -143,7 +218,9 @@ class ImageWindow(QtGui.QWidget):
         # Set scene:
         self.scene = QtGui.QGraphicsScene()
         # Set view:
-        self.view = QtGui.QGraphicsView(self.scene)
+        self.view = GraphicsView(self.scene)
+        # TODO: pass reference to the control window with constructor.
+        self.view.control_window = self.control_window
         self.view.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.view.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
@@ -193,6 +270,8 @@ class ImageWindow(QtGui.QWidget):
         self.scene.update()
         # Adjust view size:
         self.view.setFixedSize(scale*w, scale*h)
+        # Draw scribbles:
+        self.view.draw_scribbles()
         # Update Widget size:
         self.setFixedHeight(self.view.height())
         self.setFixedWidth(self.view.width())
