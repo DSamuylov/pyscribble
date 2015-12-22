@@ -12,6 +12,12 @@ Usage:
 Arguments:
     <path-img>
 
+TODO:
+    * open_image
+    * reset_mask
+    * save_mask
+    * Event on closing image
+
 Author: Denis Samuylov
 Date: denis.samuylov@gmail.com
 Last edited: December 2015
@@ -21,13 +27,22 @@ Last edited: December 2015
 import os
 import sys
 import docopt
-import Image
-import ImageQt
 import tifffile
 import numpy as np
 import PyQt4.QtGui as QtGui
 import PyQt4.QtCore as QtCore
 
+# Scale of the image to draw:
+SCALE = "scale"
+
+# Image dimensions:
+SLICE = "slice"
+FRAME = "frame"
+DIMENSION_LABELS = [FRAME, SLICE]
+# CHANNEL = "channel"
+# DIMENSION_LABELS = [FRAME, SLICE, CHANNEL]
+
+# Color map to display the image:
 COLORTABLE = [QtGui.qRgb(i, i, i) for i in range(256)]
 
 
@@ -42,52 +57,112 @@ class ControlWindow(QtGui.QWidget):
         self.image_projected = None
 
         self.image_window = None
-        if path_image is not None:
-            self.image = read_image(path_image)
-            # TODO: depends on the image dimension
-            self.image_projected = np.mean(self.image, axis=0)
-            self.image_is_loaded = True
 
         # Objects we will initialize from the scene
         self.selected_pixels = None
         self.polygon_collection = None
 
-        # TODO: the projection depends on number of dimensions
-        self.project_in_z = False
-        self.dragging = False
+        self.view = {SLICE: 0, FRAME: 0, SCALE: 1}
+        self.project = {SLICE: False, FRAME: False}
+        # self.view = {CHANNEL: 0, SLICE: 0, FRAME: 0, SCALE: 1}
+        # self.project = {CHANNEL: False, SLICE: False, FRAME: False}
 
-        # TODO: the view depends on the image dimenstion
-        self.view = {"z": 0, "t": 0, "scale": 1}
+        # Shared GUI elements:
+        self.sliders_widget = None
+        self.mask_name_line = None
+        self.sliders = {}
+        self.projection_checkboxes = {}
 
-        # GUI elements:
-        self.zoom_out_button = None
-        self.zoom_in_button = None
+        # Define shortcuts
+        self.define_shortcuts()
+
+        # Set focus, otherwise it focuses on QLineEdit
+        self.setFocus()
+        self.setFixedSize(self.minimumSize())
+        self.initUI()
+
+        if path_image is not None:
+            # Load image
+            self.image = read_image(path_image)
+            self.image_is_loaded = True
+            self.update_projected_image()
+            # Update GUI elements
+            image_window = ImageWindow(self)
+            self.add_image_window(image_window)
+            self.update_slider_widget()
+            self.image_window.update_image_to_display()
 
     def initUI(self):
         self.setWindowTitle('pyscribble')
 
+        # Open image
+        open_button = QtGui.QPushButton("Open image")
+        open_button.clicked.connect(self.open_image)
+
         # Zoom-in
         zoom_in_button = QtGui.QPushButton('   +   ')
         zoom_in_button.clicked.connect(self.zoom_in)
+
         # Zoom-out
         zoom_out_button = QtGui.QPushButton('   -   ')
         zoom_out_button.clicked.connect(self.zoom_out)
 
+        # Widget panel
+        self.sliders_widget = QtGui.QFrame()
+
+        # Display output mask name
+        self.mask_name_line = QtGui.QLineEdit(self)
+        self.mask_name_line.setText(self.generate_default_mask_name())
+
+        # Reset mask
+        reset_button = QtGui.QPushButton("Reset")
+        reset_button.clicked.connect(self.reset_mask)
+
+        # Save button
+        save_button = QtGui.QPushButton("Save")
+        save_button.clicked.connect(self.save_mask)
+
         # Set layout:
         layout = QtGui.QGridLayout()
-        # layout.addWidget(self.zproj_cb, 0, 0, 1, 2)
+        layout.addWidget(open_button, 0, 0, 1, 2)
         layout.addWidget(zoom_out_button, 1, 0)
         layout.addWidget(zoom_in_button, 1, 1)
-        # layout.addWidget(self.mask_name_le, 2, 0, 1, 2)
-        # layout.addWidget(save_button, 3, 0, 1, 2)
+        layout.addWidget(self.sliders_widget, 2, 0, 1, 2)
+        layout.addWidget(self.mask_name_line, 3, 0, 1, 2)
+        layout.addWidget(reset_button, 4, 0)
+        layout.addWidget(save_button, 4, 1)
         self.setLayout(layout)
 
         self.setGeometry(100, 100, 200, 400)
-
-        # Show image window and control window
-        if self.image_is_loaded:
-            self.image_window.initUI()
         self.show()
+
+    def update_slider_widget(self):
+        layout = QtGui.QGridLayout()
+        # For each image dimension add slider:
+        shape = self.image.shape
+        for dim in range(len(self.image.shape) - 2):
+            lbl = DIMENSION_LABELS[dim]
+            n = shape[dim]
+            # --> add label:
+            label = QtGui.QLabel(lbl)
+            layout.addWidget(label, dim, 1)
+            # --> add slider:
+            slider = QtGui.QSlider()
+            slider.setMinimum(0)
+            slider.setMaximum(n - 1)
+            slider.setOrientation(QtCore.Qt.Horizontal)
+            slider.valueChanged.connect(self.update_view)
+            layout.addWidget(slider, dim, 2)
+            # (register slider)
+            self.sliders[DIMENSION_LABELS[dim]] = slider
+            # --> add checkbox:
+            check = QtGui.QCheckBox(self.sliders_widget)
+            check.setChecked(True)
+            check.stateChanged.connect(self.update_project_checkbox)
+            layout.addWidget(check, dim, 3)
+            # (register checkbox)
+            self.projection_checkboxes[DIMENSION_LABELS[dim]] = check
+        self.sliders_widget.setLayout(layout)
 
     def closeEvent(self, evnt):
         if self.image_window is not None:
@@ -100,6 +175,44 @@ class ControlWindow(QtGui.QWidget):
         self.activateWindow()
         # print QMouseEvent.pos()
 
+    def update_view(self):
+        # Read data from sliders into views:
+        for slider_label in self.sliders:
+            slider = self.sliders[slider_label]
+            value = slider.value()
+            self.view[slider_label] = value
+        print "Display:", self.view
+        # Update view
+        self.image_window.update_image_to_display()
+
+    def update_project_checkbox(self):
+        self.project[SLICE] = not self.projection_checkboxes[SLICE].isChecked()
+        self.project[FRAME] = not self.projection_checkboxes[FRAME].isChecked()
+        self.update_projected_image()
+        # update max values for sliders
+        shape = self.image_projected.shape
+
+        self.sliders[FRAME].setValue(0)
+        self.view[FRAME] = 0
+        self.sliders[FRAME].setMaximum(shape[0] - 1)
+
+        self.sliders[SLICE].setValue(0)
+        self.view[SLICE] = 0
+        self.sliders[SLICE].setMaximum(shape[1] - 1)
+
+        self.image_window.update_image_to_display()
+
+    def update_projected_image(self):
+        tmp = np.array(self.image)
+        print self.project[FRAME]
+        if self.project[FRAME]:
+            tmp = np.mean(tmp, axis=0)
+            tmp = np.expand_dims(tmp, 0)
+        if self.project[SLICE]:
+            tmp = np.mean(tmp, axis=1)
+            tmp = np.expand_dims(tmp, 1)
+        self.image_projected = tmp
+
     def add_image_window(self, widget):
         widget.set_control_window(self)
         self.image_window = widget
@@ -111,6 +224,32 @@ class ControlWindow(QtGui.QWidget):
     def zoom_out(self):
         self.view["scale"] /= 2
         self.image_window.rescale_image_to_display()
+
+    def open_image(self):
+        path = str(QtGui.QFileDialog.getOpenFileName(
+            self,
+            "Select an image.",
+            # os.path.expanduser("~"),
+            os.path.dirname(self.path_image),
+            "Images (*.tif)"))
+        # TODO: read image and redraw it.
+        pass
+
+    def generate_default_mask_name(self):
+        folder_name = os.path.dirname(self.path_image)
+        image_id = os.path.basename(self.path_image)
+        return os.path.join(folder_name, "{}-mask.tif".format(image_id))
+
+    def reset_mask(self):
+        pass
+
+    def save_mask(self):
+        pass
+
+    def define_shortcuts(self):
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+D"), self, self.close)
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+="), self, self.zoom_in)
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+-"), self, self.zoom_out)
 
 
 class GraphicsView(QtGui.QGraphicsView):
@@ -188,20 +327,22 @@ class GraphicsView(QtGui.QGraphicsView):
             self.scene().addPath(path, self.red_pen)
 
 
-
 class ImageWindow(QtGui.QWidget):
 
-    def __init__(self):
+    def __init__(self, control_window):
 
         QtGui.QWidget.__init__(self)
 
         # Keep reference to control window to have access to view state & data:
-        self.control_window = None
+        self.control_window = control_window
         # An image to display is stored in the format of QtGui.QImage:
         self.image_to_display = None
         # GUI elements:
         self.scene = None
         self.view = None
+        # Add shortcuts:
+        self.define_shortcuts()
+        self.initUI()
 
     def initUI(self):
 
@@ -224,9 +365,6 @@ class ImageWindow(QtGui.QWidget):
         self.view.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.view.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
 
-        # Add listeners:
-        # TODO
-
         # Add image to the scene and display it:
         self.update_image_to_display()
 
@@ -245,11 +383,12 @@ class ImageWindow(QtGui.QWidget):
         """Read image data from control_window and convert them to Qt format"""
         # Get image we would like to display and its dimensions:
         img = self.control_window.image_projected
-        _, h, w = img.shape
+        _, _, h, w = img.shape
         # Get current slice to display:
-        z = self.control_window.view["z"]
+        frame = self.control_window.view["frame"]
+        z = self.control_window.view["slice"]
         # Normalize and convert to Qt format:
-        nimg = normalize(img[z], img.min(), img.max()).T
+        nimg = normalize(img[frame, z], img.min(), img.max()).T
         qimg = QtGui.QImage(nimg, w, h, w, QtGui.QImage.Format_Indexed8)
         qimg.setColorTable(COLORTABLE)
         self.image_to_display = qimg
@@ -259,7 +398,7 @@ class ImageWindow(QtGui.QWidget):
         # Clear the scene:
         self.scene.clear()
         # Get image dimensions of the original image:
-        _, h, w = self.control_window.image_projected.shape
+        _, _, h, w = self.control_window.image_projected.shape
         # Get current scale of the image
         scale = self.control_window.view["scale"]
         # Adjust pixel map size:
@@ -276,34 +415,33 @@ class ImageWindow(QtGui.QWidget):
         self.setFixedHeight(self.view.height())
         self.setFixedWidth(self.view.width())
 
-    def drawImage(self, z):
-        ny, nx = self.image_to_display[z].shape
-
-        qimg = QtGui.QImage(self.image_to_display[z], nx, ny, nx,
-                            QtGui.QImage.Format_Indexed8)
-        qimg.setColorTable(COLORTABLE)
-        qpm = QtGui.QPixmap.fromImage(qimg)
-
-        self.image_holder.resize(nx, ny)
-        self.image_holder.setPixmap(qpm)
+    def define_shortcuts(self):
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+="), self,
+                        self.control_window.zoom_in)
+        QtGui.QShortcut(QtGui.QKeySequence("Ctrl+-"), self,
+                        self.control_window.zoom_out)
 
 
 def main():
-    # Parse argumentsfrom command line:
+    # Parse arguments from command line:
     args = docopt.docopt(__doc__)
     path_img = args["<path-img>"]
     # Run:
     app = QtGui.QApplication(sys.argv)
-    control_window = ControlWindow(path_img)
-    if path_img:
-        image_window = ImageWindow()
-        control_window.add_image_window(image_window)
-    control_window.initUI()
+    cw = ControlWindow(path_img)
     sys.exit(app.exec_())
 
 
 def read_image(path):
-    img = tifffile.imread(path)
+    img = np.float64(tifffile.imread(path))
+    print "Image of the shape is loaded", img.shape
+    ndim = len(img.shape)
+    if ndim == 2:
+        img = img.reshape((1, 1,) + img.shape)
+    elif ndim == 3:
+        img = img.reshape((1,) + img.shape)
+    elif ndim > 4:
+        raise Exception("To many dimensions...")
     return img
 
 
@@ -313,193 +451,3 @@ def normalize(image, vmin, vmax):
 
 if __name__ == '__main__':
     main()
-
-
-#     # def initUI(self):
-#     #     # setup image:
-#     #     nframes, nslices, ny, nx = self.img.shape
-
-#     #     #
-    #     #
-#     #     #
-#     #     # # self.img_label.mousePressEvent = self.detect_img_click
-#     #     # self.img_label.mousePressEvent = self.activate_dragging
-#     #     # self.img_label.mouseReleaseEvent = self.stop_dragging
-#     #     # self.img_label.mouseMoveEvent = self.record_mouse_coordinates
-
-#     #     # self.prepare_img_to_display()
-#     #     # self.update_img(self.current_t, self.current_z)
-
-#     #     # The QLAbel widget provides a text or image display.
-#     #     # self.msk_label = QtGui.QLabel(self)
-#     #     # self.msk_label.resize(nx, ny)
-#     #     # self.msk_label.mousePressEvent = self.detect_img_click
-
-#     #     # self.update_mask(self.current_t, self.current_z)
-
-#     #     # -> set silce slider
-#     #     slider = QtGui.QSlider()
-#     #     slider.setMinimum(0)
-#     #     slider.setMaximum(nslices - 1)
-#     #     slider.setOrientation(Qt.Horizontal)
-#     #     # slider.valueChanged.connect(self.update_slice)
-
-#     #     # # # -> rigtht panel:
-#     #     # self.right_panel = QtGui.QFrame(self)
-
-#     #     # # --> project in z
-#     #     # self.zproj_cb = QtGui.QCheckBox('project in z', self)
-#     #     # self.zproj_cb.setCheckState(self.project_in_z)
-#     #     # self.zproj_cb.stateChanged.connect(self.respond_zproj_cb)
-
-#     #     # # --> Set zoom buttons
-#     #     # zoom_out_button = QtGui.QPushButton('   -   ')
-#     #     # zoom_out_button.clicked.connect(self.zoom_out)
-
-#     #     # zoom_in_button = QtGui.QPushButton('   +   ')
-#     #     # zoom_in_button.clicked.connect(self.zoom_in)
-
-#     #     # # --> Display output file name
-#     #     # self.mask_name_le = QtGui.QLineEdit(self)
-#     #     # self.mask_name_le.setText(self.generate_mask_name())
-
-#     #     # # --> Save button
-#     #     # save_button = QtGui.QPushButton('Save')
-#     #     # save_button.clicked.connect(self.save_mask)
-
-#     #     # Set layout for the right panel:
-#     #     # right_layout = QtGui.QGridLayout()
-#     #     # right_layout.addWidget(self.zproj_cb, 0, 0, 1, 2)
-#     #     # right_layout.addWidget(zoom_out_button, 1, 0)
-#     #     # right_layout.addWidget(zoom_in_button, 1, 1)
-#     #     # right_layout.addWidget(self.mask_name_le, 2, 0, 1, 2)
-#     #     # right_layout.addWidget(save_button, 3, 0, 1, 2)
-#     #     # self.right_panel.setLayout(right_layout)
-#     #     # TODO: Right layout will go to the main window.
-
-#     #     # Set layout for the image related things
-#     #     grid_layout = QtGui.QGridLayout()
-#     #     grid_layout.setSpacing(10)
-#     #     # grid.addWidget(self.img_label, 0, 0)
-#     #     # # grid.addWidget(self.msk_label, 1, 0)
-#     #     # grid_layout.addWidget(slider, 2, 0)
-
-#     #     # The widget spans 3 rows
-#     #     # grid_layout.addWidget(self.right_panel, 0, 1, 3, 1)
-
-#     #     self.setLayout(grid_layout)
-#     #     self.setGeometry(300, 300, 350, 300)
-#     #     self.setWindowTitle('Pixel Picker')
-#     #     self.show()
-
-#     # # def generate_mask_name(self):
-#     # #     img_name = os.path.split(self.path_img)[1]
-#     # #     name, ext = img_name.split('.')
-#     # #     return "{}_mask.{}".format(name, ext)
-
-#     # # def activate_dragging(self, event):
-#     # #     self.dragging = True
-#     # #     self.record_mouse_coordinates(event)
-
-#     # # def stop_dragging(self, event):
-#     # #     self.dragging = False
-
-#     # # def record_mouse_coordinates(self, event, val=255):
-#     # #     _, _, ny, nx = self.img.shape
-#     # #     x, y = event.x()/self.current_zoom, event.y()/self.current_zoom
-#     # #     if x < 0 or x >= nx or y < 0 or y >= ny:
-#     # #         return
-#     # #     # print "click at x={} y={}".format(x, y)
-
-#     # #     if self.project_in_z:
-#     # #         self.mask[:, y, x] = val
-#     # #     self.mask[self.current_z, y, x] = val
-
-#     # # def normalize(self, img, vmin=None, vmax=None):
-#     # #     """scale image between 0 and 255"""
-#     # #     img = np.array(img)
-#     # #     if vmin is None:
-#     # #         minv = img.min()
-#     # #     if vmax is None:
-#     # #         maxv = img.max()
-#     # #     resc_img = np.uint8(255*np.float64(img - minv)/(maxv - minv))
-#     # #     return resc_img
-
-#     # # def save_mask(self):
-#     # #     mask_name = str(self.mask_name_le.text())
-#     # #     mask_path = os.path.join(self.working_floder, mask_name)
-#     # #     tifffile.imsave(mask_path, np.uint8(self.mask))
-
-#     # # def prepare_img_to_display(self):
-#     # #     nframes, nslices, ny, nx = self.img.shape
-#     # #     img_to_display = np.mean(self.img, axis=0)
-#     # #     if self.project_in_z:
-#     # #         img_to_display = np.mean(img_to_display,
-#     # #                                  axis=0).reshape((1, ny, nx))
-#     # #     self.img_to_display = self.normalize(img_to_display)
-#     # #     self.compute_zoomed_image()
-
-#     # # def respond_zproj_cb(self):
-#     # #     self.img_zoomed = {}
-#     # #     self.project_in_z = self.zproj_cb.checkState()
-#     # #     self.prepare_img_to_display()
-#     # #     self.update_img(self.current_t, self.current_z)
-
-#     # # def update_slice(self, z):
-#     # #     """update z-slice"""
-#     # #     # print "slice is changed = {}".format(z)
-#     # #     if self.project_in_z:
-#     # #         return
-#     # #     self.update_img(self.current_t, z)
-#     # #     self.current_z = z
-
-#     # # def zoom_out(self):
-#     # #     if self.current_zoom <= 1:
-#     # #         return
-#     # #     print "zoom out"
-#     # #     self.current_zoom -= 1
-#     # #     self.compute_zoomed_image()
-#     # #     self.update_img(self.current_t, self.current_z)
-
-#     # # def zoom_in(self):
-#     # #     print "zoom in"
-#     # #     self.current_zoom += 1
-#     # #     self.compute_zoomed_image()
-#     # #     self.update_img(self.current_t, self.current_z)
-
-#     # # def compute_zoomed_image(self):
-#     # #     if self.current_zoom in self.img_zoomed:
-#     # #         print "the zoomed img is already computed"
-#     # #         return
-#     # #     nframes, nslices, ny, nx = self.img.shape
-#     # #     zoom = self.current_zoom
-#     # #     img_zoomed = [np.repeat(np.repeat(img2d, zoom, axis=0), zoom, axis=1)
-#     # #                   for img2d in self.img_to_display]
-#     # #     img_zoomed = self.normalize(img_zoomed)
-#     # #     self.img_zoomed[self.current_zoom] = img_zoomed
-
-#     # # def get_img_zoomed_to_dispaly(self, z):
-#     # #     zoom = self.current_zoom
-#     # #     if self.project_in_z:
-#     # #         return self.img_zoomed[zoom][0]
-#     # #     return self.img_zoomed[zoom][z]
-
-#     # # def update_img(self, t, z):
-#     # #     img2d = self.get_img_zoomed_to_dispaly(z)
-#     # #     ny, nx = img2d.shape
-
-#     # #     qimg = QtGui.QImage(img2d.data, nx, ny, nx,
-#     # #                         QtGui.QImage.Format_Indexed8)
-#     # #     qimg.setColorTable(COLORTABLE)
-#     # #     qpm = QtGui.QPixmap.fromImage(qimg)
-
-#     # #     self.img_label.resize(nx, ny)
-#     # #     self.img_label.setPixmap(qpm)
-
-
-# def main():
-
-
-
-# if __name__ == "__main__":
-#     main()
