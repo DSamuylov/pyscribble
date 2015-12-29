@@ -54,15 +54,7 @@ class ControlWindow(QtGui.QWidget):
         self.initUI()
 
         if path_image is not None:
-            # Load image
-            self.image = read_image(path_image)
-            self.image_is_loaded = True
-            self.update_projected_image()
-            # Update GUI elements
-            image_window = ImageWindow(self)
-            self.add_image_window(image_window)
-            self.update_slider_widget()
-            self.image_window.update_image_to_display()
+            self.load_image(path_image)
 
     def initUI(self):
         self.setWindowTitle('pyscribble')
@@ -84,7 +76,6 @@ class ControlWindow(QtGui.QWidget):
 
         # Display output mask name
         self.mask_name_line = QtGui.QLineEdit(self)
-        self.mask_name_line.setText(self.generate_default_mask_name())
 
         # Reset mask
         reset_button = QtGui.QPushButton("Reset")
@@ -108,43 +99,46 @@ class ControlWindow(QtGui.QWidget):
         self.setGeometry(100, 100, 200, 400)
         self.show()
 
-    def update_slider_widget(self):
-        layout = QtGui.QGridLayout()
-        # For each image dimension add slider:
-        shape = self.image.shape
-        for dim in range(len(self.image.shape) - 2):
-            lbl = DIMENSION_LABELS[dim]
-            n = shape[dim]
-            # --> add label:
-            label = QtGui.QLabel(lbl)
-            layout.addWidget(label, dim, 1)
-            # --> add slider:
-            slider = QtGui.QSlider()
-            slider.setMinimum(0)
-            slider.setMaximum(n - 1)
-            slider.setOrientation(QtCore.Qt.Horizontal)
-            slider.valueChanged.connect(self.update_view)
-            layout.addWidget(slider, dim, 2)
-            # (register slider)
-            self.sliders[DIMENSION_LABELS[dim]] = slider
-            # --> add checkbox:
-            check = QtGui.QCheckBox(self.sliders_widget)
-            check.setChecked(True)
-            check.stateChanged.connect(self.update_project_checkbox)
-            layout.addWidget(check, dim, 3)
-            # (register checkbox)
-            self.projection_checkboxes[DIMENSION_LABELS[dim]] = check
-        self.sliders_widget.setLayout(layout)
-
-    def closeEvent(self, evnt):
+    def closeEvent(self, event):
         if self.image_window is not None:
             self.image_window.close()
-        super(ControlWindow, self).closeEvent(evnt)
+        super(ControlWindow, self).closeEvent(event)
 
     def mousePressEvent(self, QMouseEvent):
         # Bring image window to front
-        self.image_window.activateWindow()
+        if self.image_window is not None:
+            self.image_window.activateWindow()
         self.activateWindow()
+
+    def reset_image_data(self):
+        if self.image_window is not None:
+            self.image_window.close()
+            self.image_window = None
+        # Reset view and projection:
+        self.path_image = None
+
+        self.image_is_loaded = False
+        self.image = None
+        self.image_projected = None
+
+        self.view = {SLICE: 0, FRAME: 0, SCALE: 1}
+        self.project = {SLICE: False, FRAME: False}
+        self.update_default_mask_name()
+
+    def load_image(self, path):
+        if self.image_window is not None:
+            self.reset_image_data()
+        # Load image
+        self.path_image = path
+        self.image = read_image(path)
+        self.image_is_loaded = True
+        self.update_projected_image()
+        # Update GUI elements
+        image_window = ImageWindow(self)
+        self.add_image_window(image_window)
+        self.update_slider_widget()
+        self.image_window.update_image_to_display()
+        self.update_default_mask_name()
 
     def update_view(self):
         # Read data from sliders into views:
@@ -155,6 +149,58 @@ class ControlWindow(QtGui.QWidget):
         # print "Display:", self.view
         # Update view
         self.image_window.update_image_to_display()
+
+    def update_slider_widget(self):
+
+        layout = self.sliders_widget.layout()
+        if layout is None:
+            layout = QtGui.QGridLayout()
+            self.sliders_widget.setLayout(layout)
+        else:
+            # Remove all widgets:
+            for i in reversed(range(layout.count())):
+                layout.itemAt(i).widget().setParent(None)
+                # Note: widget is deleted when its parent is deleted.
+
+        if self.image is not None:
+            # For each image dimension add slider:
+            shape = self.image.shape
+            for dim in range(len(self.image.shape) - 2):
+                lbl = DIMENSION_LABELS[dim]
+                n = shape[dim]
+                # --> add label:
+                label = QtGui.QLabel(lbl)
+                layout.addWidget(label, dim, 1)
+                # --> add slider:
+                slider = QtGui.QSlider()
+                slider.setMinimum(0)
+                slider.setMaximum(n - 1)
+                slider.setOrientation(QtCore.Qt.Horizontal)
+                slider.valueChanged.connect(self.update_view)
+                layout.addWidget(slider, dim, 2)
+                # (register slider)
+                self.sliders[DIMENSION_LABELS[dim]] = slider
+                # --> add checkbox:
+                check = QtGui.QCheckBox(self.sliders_widget)
+                check.setChecked(True)
+                check.stateChanged.connect(self.update_project_checkbox)
+                layout.addWidget(check, dim, 3)
+                # (register checkbox)
+                self.projection_checkboxes[DIMENSION_LABELS[dim]] = check
+
+    def update_default_mask_name(self):
+        mask_name = None
+        if self.image is not None:
+            # Generate default mask name
+            folder_name = os.path.dirname(self.path_image)
+            image_id = os.path.basename(self.path_image).split(".")[0]
+            mask_name = os.path.join(folder_name,
+                                     "{}-mask.tif".format(image_id))
+
+        if mask_name is not None:
+            self.mask_name_line.setText(mask_name)
+        else:
+            self.mask_name_line.setText("")
 
     def update_project_checkbox(self):
         self.project[SLICE] = not self.projection_checkboxes[SLICE].isChecked()
@@ -199,16 +245,9 @@ class ControlWindow(QtGui.QWidget):
         path = str(QtGui.QFileDialog.getOpenFileName(
             self,
             "Select an image.",
-            # os.path.expanduser("~"),
-            os.path.dirname(self.path_image),
+            os.path.expanduser("~"),
             "Images (*.tif)"))
-        # TODO: read image and redraw it.
-        pass
-
-    def generate_default_mask_name(self):
-        folder_name = os.path.dirname(self.path_image)
-        image_id = os.path.basename(self.path_image)
-        return os.path.join(folder_name, "{}-mask.tif".format(image_id))
+        self.load_image(path)
 
     def reset_mask(self):
         self.image_window.reset_scribbles()
@@ -273,27 +312,43 @@ class GraphicsView(QtGui.QGraphicsView):
 
     def mousePressEvent(self, event):
         self.dragging = True
+        # Initialize a scribble (only in 2D):
+        self.current_scribble = []
+        # Note: we add slice information when we register release event.
+
         # Register clicked point:
         qp = QtCore.QPointF(event.pos())
-        z = self.control_window.view["slice"]
-        # Initialize a scribble:
-        self.current_scribble = []
-        self.current_scribble.append((z,) + self.qp2px(qp))
+        y, x = self.qp2px(qp)
+        # Update current scribble:
+        self.current_scribble.append((y, x))
         self.draw_current_scribble()
 
     def mouseMoveEvent(self, event):
         # Register clicked point:
         qp = QtCore.QPointF(event.pos())
-        z = self.control_window.view["slice"]
+        y, x = self.qp2px(qp)
         # Update current scribble:
-        self.current_scribble.append((z,) + self.qp2px(qp))
+        self.current_scribble.append((y, x))
         self.draw_current_scribble()
 
     def mouseReleaseEvent(self, event):
         self.dragging = False
         # Save the scribble we have drawn:
-        self.scribbles.append(self.current_scribble)
+        self.register_current_scribble()
         self.current_scribble = None
+
+    def register_current_scribble(self):
+        """Add scribble that we have drawn."""
+        # Add scribble depending on a view:
+        if self.control_window.project[SLICE]:
+            # -> at all slices:
+            nslices = self.control_window.image.shape[-3]
+            [self.scribbles.append([(z,) + p for p in self.current_scribble])
+                for z in np.arange(nslices)]
+        else:
+            # -> at a current slice:
+            z = self.control_window.view["slice"]
+            self.scribbles.append([(z,) + p for p in self.current_scribble])
 
     def qp2px(self, qp):
         """Convert clicked position to selected pixel."""
@@ -308,7 +363,7 @@ class GraphicsView(QtGui.QGraphicsView):
     def draw_current_scribble(self):
         if self.current_scribble is not None:
             polygon = QtGui.QPolygonF()
-            [polygon.append(self.px2qp(p[1:])) for p in self.current_scribble]
+            [polygon.append(self.px2qp(p)) for p in self.current_scribble]
 
             path = QtGui.QPainterPath()
             path.addPolygon(polygon)
@@ -317,6 +372,17 @@ class GraphicsView(QtGui.QGraphicsView):
     def draw_scribbles(self):
         # Draw all traces that are already stored:
         for scribble in self.scribbles:
+
+            # Draw scribbles only at a current slice:
+            # TODO: do it more efficiently by storing scribbles for each frame
+            if self.control_window.project[SLICE]:
+                # Draw scribbles for all slices:
+                pass
+            else:
+                # Draw scribbles only for current slice:
+                z = self.control_window.view[SLICE]
+                scribble = filter(lambda p: p[0] == z, scribble)
+
             polygon = QtGui.QPolygonF()
             [polygon.append(self.px2qp(p[1:])) for p in scribble]
 
@@ -373,6 +439,11 @@ class ImageWindow(QtGui.QWidget):
         self.setLayout(layout)
 
         self.show()
+
+    def closeEvent(self, event):
+        self.control_window.reset_image_data()
+        self.control_window.update_slider_widget()
+        super(ImageWindow, self).closeEvent(event)
 
     def set_control_window(self, control_window):
         self.control_window = control_window
