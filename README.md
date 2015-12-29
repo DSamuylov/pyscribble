@@ -1,5 +1,7 @@
-# README
+### Summary
 
-A QT-based plug-in to scribble images and create binary masks.
+Scribble pixels and save binary masks. The application currently supports only 4D images in .tif format (2D and 3D images are not tested).
 
-# USAGE
+[demo](demo.png)
+
+

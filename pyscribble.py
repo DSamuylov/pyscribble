@@ -23,7 +23,6 @@ import docopt
 import PyQt4.QtGui as QtGui
 from pyscribble.main import ControlWindow
 
-
 if __name__ == '__main__':
     # Parse arguments from command line:
     args = docopt.docopt(__doc__)
