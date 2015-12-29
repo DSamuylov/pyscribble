@@ -4,6 +4,7 @@
 
 # File formats
 *.pyc
+*.ai
 
 # Temporary files
 *~
