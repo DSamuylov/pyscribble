@@ -288,7 +288,7 @@ class ControlWindow(QtGui.QWidget):
                     if pass_:
                         y_, x_ = px
                         mask[zs, y_, x_] = mask_value
-        tifffile.imsave(self.mask_name_line.text(), mask)
+        tifffile.imsave(str(self.mask_name_line.text()), mask)
 
     def define_shortcuts(self):
         QtGui.QShortcut(QtGui.QKeySequence("Ctrl+D"), self, self.close)

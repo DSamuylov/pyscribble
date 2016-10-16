@@ -4,4 +4,8 @@ Scribble pixels and save binary masks. The application currently supports only 4
 
 ![demo](demo.png)
 
+### Usage
 
+```
+python path_to_pyscribble.py path_to_image_stack
+```
